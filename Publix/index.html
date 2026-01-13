@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CardSnipe</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+  <header class="bg-white shadow-sm border-b border-gray-200">
+    <div class="max-w-7xl mx-auto px-4 py-4">
+      <h1 class="text-2xl font-bold text-blue-600">CardSnipe</h1>
+    </div>
+  </header>
+
+  <nav class="bg-white border-b border-gray-200">
+    <div class="max-w-7xl mx-auto px-4">
+      <div class="flex space-x-8" id="nav-tabs"></div>
+    </div>
+  </nav>
+
+  <main class="max-w-7xl mx-auto px-4 py-8">
+    <div id="app-content"></div>
+  </main>
+
+  <script>
+    let currentPage = 'dashboard';
+    let deals = [];
+    let alerts = [];
+    let players = {};
+    let apiStatus = 'checking';
+    let lastScan = null;
+
+    // Load saved data
+    const savedDeals = localStorage.getItem('cardsnipe_deals');
+    const savedAlerts = localStorage.getItem('cardsnipe_alerts');
+    const savedLastScan = localStorage.getItem('cardsnipe_last_scan');
+    if (savedDeals) deals = JSON.parse(savedDeals);
+    if (savedAlerts) alerts = JSON.parse(savedAlerts);
+    if (savedLastScan) lastScan = savedLastScan;
+
+    // Initialize
+    checkApiStatus();
+    fetchPlayers();
+    renderNav();
+    renderPage();
+
+    async function checkApiStatus() {
+      try {
+        const response = await fetch('/api/health');
+        const data = await response.json();
+        apiStatus = data.configured ? 'connected' : 'not-configured';
+      } catch (error) {
+        apiStatus = 'error';
+      }
+      renderPage();
+    }
+
+    async function fetchPlayers() {
+      try {
+        const response = await fetch('/api/players');
+        players = await response.json();
+      } catch (error) {
+        console.error('Error fetching players:', error);
+      }
+      renderPage();
+    }
+
+    async function scanNow() {
+      if (apiStatus !== 'connected') {
+        alert('eBay API not configured');
+        return;
+      }
+
+      const btn = document.getElementById('scan-btn');
+      btn.disabled = true;
+      btn.textContent = 'Scanning...';
+
+      try {
+        const response = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          const newDeals = data.deals.filter(deal => !deals.some(d => d.id === deal.id));
+          deals = [...newDeals, ...deals];
+          localStorage.setItem('cardsnipe_deals', JSON.stringify(deals));
+
+          const newAlerts = newDeals.map(deal => ({
+            id: `alert-${Date.now()}-${Math.random()}`,
+            ...deal
+          }));
+          alerts = [...newAlerts, ...alerts];
+          localStorage.setItem('cardsnipe_alerts', JSON.stringify(alerts));
+
+          lastScan = new Date().toISOString();
+          localStorage.setItem('cardsnipe_last_scan', lastScan);
+
+          alert(`Scan complete! Found ${newDeals.length} new deals.`);
+          renderPage();
+        } else {
+          alert('Scan failed: ' + data.error);
+        }
+      } catch (error) {
+        alert('Scan error: ' + error.message);
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Scan Now';
+    }
+
+    function renderNav() {
+      const nav = document.getElementById('nav-tabs');
+      ['dashboard', 'deals', 'players', 'alerts'].forEach(page => {
+        const btn = document.createElement('button');
+        btn.textContent = page.charAt(0).toUpperCase() + page.slice(1);
+        btn.className = `py-4 px-1 border-b-2 font-medium text-sm capitalize ${
+          currentPage === page ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-600 hover:text-gray-900'
+        }`;
+        btn.onclick = () => {
+          currentPage = page;
+          renderNav();
+          renderPage();
+        };
+        nav.appendChild(btn);
+      });
+    }
+
+    function renderPage() {
+      const content = document.getElementById('app-content');
+      
+      if (currentPage === 'dashboard') {
+        const todayDeals = deals.filter(d => new Date(d.timestamp).toDateString() === new Date().toDateString());
+        const weekAgo = new Date();
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        const weekDeals = deals.filter(d => new Date(d.timestamp) >= weekAgo);
+        const totalPlayers = Object.values(players).reduce((sum, sport) => 
+          sum + Object.values(sport).reduce((s, pos) => s + pos.length, 0), 0
+        );
+
+        content.innerHTML = `
+          <div class="space-y-6">
+            <div class="flex justify-between items-center">
+              <h1 class="text-3xl font-bold text-gray-900">Dashboard</h1>
+              <button id="scan-btn" onclick="scanNow()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                Scan Now
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div class="bg-white p-6 rounded-lg shadow">
+                <p class="text-sm text-gray-600">Deals Today</p>
+                <p class="text-3xl font-bold text-gray-900">${todayDeals.length}</p>
+              </div>
+              <div class="bg-white p-6 rounded-lg shadow">
+                <p class="text-sm text-gray-600">Deals This Week</p>
+                <p class="text-3xl font-bold text-gray-900">${weekDeals.length}</p>
+              </div>
+              <div class="bg-white p-6 rounded-lg shadow">
+                <p class="text-sm text-gray-600">Players Tracked</p>
+                <p class="text-3xl font-bold text-gray-900">${totalPlayers}</p>
+              </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-lg shadow">
+              <h2 class="text-xl font-semibold text-gray-900 mb-4">System Status</h2>
+              <div class="space-y-3">
+                <div class="flex justify-between items-center">
+                  <span class="text-gray-600">Last Scan</span>
+                  <span class="text-gray-900">${lastScan ? new Date(lastScan).toLocaleString() : 'Never'}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-gray-600">eBay API Status</span>
+                  <span class="px-3 py-1 rounded-full text-sm font-medium ${
+                    apiStatus === 'connected' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                  }">
+                    ${apiStatus === 'connected' ? 'Connected' : 'Not Configured'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      } else if (currentPage === 'deals') {
+        if (deals.length === 0) {
+          content.innerHTML = `
+            <div class="bg-white p-12 rounded-lg shadow text-center">
+              <h3 class="text-xl font-semibold text-gray-900 mb-2">No Deals Yet</h3>
+              <p class="text-gray-600">Click Scan Now to start finding deals</p>
+            </div>
+          `;
+        } else {
+          content.innerHTML = `
+            <h1 class="text-3xl font-bold text-gray-900 mb-6">Detected Deals</h1>
+            <div class="grid grid-cols-1 gap-4">
+              ${deals.map(deal => `
+                <div class="bg-white p-6 rounded-lg shadow">
+                  <div class="flex justify-between items-start mb-4">
+                    <div>
+                      <h3 class="text-lg font-semibold text-gray-900">${deal.player}</h3>
+                      <p class="text-sm text-gray-600 mt-1">${deal.title}</p>
+                    </div>
+                    <span class="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-bold">
+                      ${deal.percentUnder}% OFF
+                    </span>
+                  </div>
+                  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                      <p class="text-xs text-gray-500 uppercase">Current Price</p>
+                      <p class="text-sm font-semibold text-gray-900">$${deal.price}</p>
+                    </div>
+                    <div>
+                      <p class="text-xs text-gray-500 uppercase">Avg Sold Price</p>
+                      <p class="text-sm font-semibold text-gray-900">$${deal.avgSoldPrice}</p>
+                    </div>
+                    <div>
+                      <p class="text-xs text-gray-500 uppercase">Found</p>
+                      <p class="text-sm font-semibold text-gray-900">${new Date(deal.timestamp).toLocaleDateString()}</p>
+                    </div>
+                    <div>
+                      <a href="${deal.url}" target="_blank" class="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
+                        View on eBay
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        }
+      } else if (currentPage === 'players') {
+        content.innerHTML = `
+          <h1 class="text-3xl font-bold text-gray-900 mb-6">Tracked Players</h1>
+          ${Object.entries(players).map(([sport, positions]) => `
+            <div class="bg-white p-6 rounded-lg shadow mb-6">
+              <h2 class="text-2xl font-semibold text-gray-900 mb-4 capitalize">${sport}</h2>
+              ${Object.entries(positions).map(([position, playerList]) => `
+                <div class="mb-6 last:mb-0">
+                  <h3 class="text-lg font-semibold text-gray-700 mb-3">${position}</h3>
+                  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    ${playerList.map(player => `
+                      <div class="px-4 py-2 bg-gray-50 rounded-lg border border-gray-200">
+                        <p class="text-sm font-medium text-gray-900">${player}</p>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `).join('')}
+        `;
+      } else if (currentPage === 'alerts') {
+        if (alerts.length === 0) {
+          content.innerHTML = `
+            <div class="bg-white p-12 rounded-lg shadow text-center">
+              <h3 class="text-xl font-semibold text-gray-900 mb-2">No Alerts Yet</h3>
+              <p class="text-gray-600">Alerts will appear here when deals are detected</p>
+            </div>
+          `;
+        } else {
+          content.innerHTML = `
+            <h1 class="text-3xl font-bold text-gray-900 mb-6">Alert History</h1>
+            <div class="bg-white rounded-lg shadow overflow-x-auto">
+              <table class="w-full">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Player</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Price</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Discount</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                  ${alerts.map(alert => `
+                    <tr class="hover:bg-gray-50">
+                      <td class="px-6 py-4 text-sm text-gray-900">${new Date(alert.timestamp).toLocaleString()}</td>
+                      <td class="px-6 py-4 text-sm font-medium text-gray-900">${alert.player}</td>
+                      <td class="px-6 py-4 text-sm text-gray-900">$${alert.price}</td>
+                      <td class="px-6 py-4">
+                        <span class="px-2 py-1 bg-green-100 text-green-800 rounded text-sm font-semibold">
+                          ${alert.percentUnder}% OFF
+                        </span>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          `;
+        }
+      }
+    }
+  </script>
+</body>
+</html>
