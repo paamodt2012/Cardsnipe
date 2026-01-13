@@ -119,7 +119,7 @@ function evaluateDeal(listing, soldPrices) {
   const avgSoldPrice = soldPrices.reduce((sum, item) => sum + item.price, 0) / soldPrices.length;
   const percentOfMarket = listing.price / avgSoldPrice;
 
-  if (percentOfMarket <= 0.70) {
+  if (percentOfMarket <= 0.80) {
     return {
       ...listing,
       avgSoldPrice: avgSoldPrice.toFixed(2),
